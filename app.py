@@ -6,11 +6,18 @@ from io import BytesIO
 import zipfile
 import base64
 import matplotlib.pyplot as plt
+import numpy as np
+import time
+import pydeck as pdk
+from urllib.error import URLError
 
-# Function to fetch inscriptions data from ordinals.com
+# Cache the data fetching function
+@st.cache_data
 def fetch_inscriptions(url):
+    st.write(f"Fetching data from {url}...")  # Debug info
     response = requests.get(url)
     if response.status_code == 200:
+        st.write("Data fetched successfully.")  # Debug info
         return response.json()
     else:
         st.error(f"Failed to retrieve data. Status code: {response.status_code}")
@@ -47,6 +54,15 @@ def get_zip_download_link(images):
     href = f'<a href="data:application/zip;base64,{b64}" download="images.zip">Download Images Zip</a>'
     return href
 
+# Fetch example data for map layers
+@st.cache_data
+def from_data_file(filename):
+    url = (
+        "https://raw.githubusercontent.com/streamlit/"
+        "example-data/master/hello/v1/%s" % filename
+    )
+    return pd.read_json(url)
+
 # Streamlit UI
 st.title('Most Viewed Inscriptions in the Last 24 Hours')
 
@@ -63,21 +79,18 @@ url = st.text_input('Enter URL for inscriptions data', value='https://ordinals.c
 if url:
     inscriptions = fetch_inscriptions(url)
     if inscriptions:
+        st.write(f"Number of inscriptions fetched: {len(inscriptions)}")  # Debug info
         most_viewed_inscriptions = filter_and_sort_inscriptions(inscriptions)
         
         if most_viewed_inscriptions:
             st.write(f"Found {len(most_viewed_inscriptions)} inscriptions in the last 24 hours.")
             
-            # Convert to DataFrame for easy manipulation
             df = pd.DataFrame(most_viewed_inscriptions)
             
-            # Display DataFrame
             st.dataframe(df)
             
-            # Download CSV link
             st.markdown(get_table_download_link(df), unsafe_allow_html=True)
             
-            # Display charts
             st.subheader("Views Distribution")
             fig, ax = plt.subplots()
             df['views'].plot(kind='hist', bins=20, ax=ax)
@@ -104,11 +117,9 @@ if url:
             else:
                 st.write("No category data available.")
             
-            # Prepare images for zip download
             images = [(ins['image_url'], ins['title']) for ins in most_viewed_inscriptions]
             st.markdown(get_zip_download_link(images), unsafe_allow_html=True)
             
-            # Display the most viewed inscriptions
             for ins in most_viewed_inscriptions:
                 st.write(f"**Title:** {ins['title']}")
                 st.write(f"**Views:** {ins['views']}")
@@ -119,4 +130,45 @@ if url:
             st.write("No inscriptions found in the last 24 hours.")
     else:
         st.write("No data available.")
-\
+
+# Interactive elements for fractal generation
+iterations = st.sidebar.slider("Level of detail", 2, 20, 10, 1)
+separation = st.sidebar.slider("Separation", 0.7, 2.0, 0.7885)
+
+# Progress bar and placeholders for fractal generation
+progress_bar = st.sidebar.progress(0)
+frame_text = st.sidebar.empty()
+image = st.empty()
+
+# Fractal generation parameters
+m, n, s = 960, 640, 400
+x = np.linspace(-m / s, m / s, num=m).reshape((1, m))
+y = np.linspace(-n / s, n / s, num=n).reshape((n, 1))
+
+for frame_num, a in enumerate(np.linspace(0.0, 4 * np.pi, 100)):
+    # Update progress bar and frame text
+    progress_bar.progress(frame_num)
+    frame_text.text(f"Frame {frame_num + 1}/100")
+
+    # Fractal generation
+    c = separation * np.exp(1j * a)
+    Z = np.tile(x, (n, 1)) + 1j * np.tile(y, (1, m))
+    C = np.full((n, m), c)
+    M = np.full((n, m), True, dtype=bool)
+    N = np.zeros((n, m))
+
+    for i in range(iterations):
+        Z[M] = Z[M] * Z[M] + C[M]
+        M[np.abs(Z) > 2] = False
+        N[M] = i
+
+    # Update the image placeholder
+    image.image(1.0 - (N / N.max()), use_column_width=True)
+
+# Clear the progress bar and frame text
+progress_bar.empty()
+frame_text.empty()
+
+# Re-run button
+st.button("Re-run")
+
